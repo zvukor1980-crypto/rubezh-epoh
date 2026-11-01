@@ -114,61 +114,125 @@ body {
   @keyframes rot { 0%,20%{transform:rotate(0)} 60%,100%{transform:rotate(-90deg)} }
   @media (orientation: portrait) and (max-width: 900px) { #rotate-overlay { display:flex; } }
 </style>
+<style>
+  #rz-tap { position:fixed; inset:0; z-index:9990; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:radial-gradient(ellipse at center, rgba(31,51,89,.92), rgba(8,12,26,.97)); color:#fff; cursor:pointer;
+    font-family:-apple-system,system-ui,sans-serif; text-align:center; -webkit-user-select:none; user-select:none; }
+  #rz-tap h1 { margin:0 0 10px; font-size:min(9vw,54px); color:#ffd84d; text-shadow:0 3px 10px rgba(0,0,0,.6); letter-spacing:1px; }
+  #rz-tap .go { font-size:min(5.5vw,28px); padding:14px 30px; border-radius:40px; background:#e8892c; box-shadow:0 4px 0 #9a5414;
+    animation:rzp 1.4s ease-in-out infinite; }
+  #rz-tap .ver { position:absolute; left:calc(env(safe-area-inset-left) + 14px); bottom:calc(env(safe-area-inset-bottom) + 10px); font-size:14px; opacity:.75; }
+  #rz-tap .dbg { position:absolute; right:calc(env(safe-area-inset-right) + 14px); bottom:calc(env(safe-area-inset-bottom) + 8px);
+    font-size:14px; padding:8px 14px; border-radius:18px; background:rgba(255,255,255,.15); border:1px solid rgba(255,255,255,.35); }
+  @keyframes rzp { 0%,100%{transform:scale(1)} 50%{transform:scale(1.06)} }
+  #rz-diag { position:fixed; z-index:10000; left:calc(env(safe-area-inset-left) + 8px); right:calc(env(safe-area-inset-right) + 8px);
+    top:8px; bottom:8px; overflow:auto; -webkit-overflow-scrolling:touch; touch-action:pan-y; display:none; background:rgba(10,14,28,.96); color:#e8eefc;
+    border:1px solid #4a5f99; border-radius:12px; padding:10px 12px; font:13px/1.35 ui-monospace,Menlo,monospace; }
+  #rz-diag button { font:15px -apple-system,system-ui,sans-serif; margin:4px 6px 4px 0; padding:9px 12px; border-radius:10px; border:0;
+    background:#3b5bb5; color:#fff; }
+  #rz-diag button.w { background:#2e9a4c } #rz-diag button.r { background:#9a3b3b }
+  #rz-diag pre { white-space:pre-wrap; margin:6px 0 0; }
+</style>
 <script>
-  // v1.3.3 — звук на iPhone (Safari и приложение «На экран Домой»).
-  // 1) iOS глушит Web Audio переключателем «Бесшумно»: просим категорию «воспроизведение» (navigator.audioSession, iOS 17+),
-  //    а на старых iOS — запускаем тихий зацикленный <audio> на первом касании (звук идёт как медиа, а не как «звонок»).
-  // 2) AudioContext Godot создаётся до касания и остаётся suspended — возобновляем его на каждом жесте (touchend/pointerup/click),
-  //    после возврата из фона (visibilitychange/pageshow/focus) и из iOS-состояния "interrupted" (звонок, Siri, блокировка).
+  // v1.3.4 — звук на iPhone, вариант «надёжно»:
+  //  • экран «Коснитесь, чтобы начать»: внутри касания создаём/возобновляем AudioContext, играем короткий сигнал через Web Audio
+  //    и через <audio>, ставим navigator.audioSession.type = 'playback' (iOS 17+: не глушится переключателем «Бесшумно»);
+  //  • контекст, созданный в жесте, отдаём движку Godot (он не создаёт свой «заблокированный»); sampleRate не навязываем —
+  //    iOS работает на 48 кГц (BT-гарнитуры — 16/48 кГц), Godot сам подстраивается под ctx.sampleRate;
+  //  • возобновление на каждом жесте, после фона/звонка (iOS-состояние "interrupted"), пауза звука в фоне;
+  //  • диагностика: ?audiodebug=1 или кнопка «Проверка звука».
   (function () {
-    var ctxs = [];
+    var VERSION = '1.3.4';
+    window.RUBEZH_VERSION = VERSION;
     var AC = window.AudioContext || window.webkitAudioContext;
+    var ctxs = [], primed = null, primedTaken = false, log = [];
+    function L(m) { log.push(new Date().toTimeString().slice(0, 8) + ' ' + m); if (log.length > 40) log.shift(); }
+    function track(c, who) { ctxs.push(c); L('AudioContext #' + ctxs.length + ' (' + who + ') ' + c.state + ' ' + c.sampleRate + ' Гц');
+      try { c.addEventListener('statechange', function () { L('ctx -> ' + c.state); if (c.state !== 'running' && c.state !== 'closed' && !document.hidden) setTimeout(function () { resumeAll(false); }, 250); }); } catch (e) {}
+      return c; }
     if (AC) {
-      var Wrapped = function (opts) { var c = (opts === undefined) ? new AC() : new AC(opts); ctxs.push(c); hook(c); return c; };
+      var Wrapped = function (opts) {
+        if (primed && !primedTaken && primed.state !== 'closed') { primedTaken = true; L('движок получил контекст из касания'); return primed; }
+        var c; try { c = new AC(); } catch (e) { c = new AC(opts); }   // без sampleRate: родная частота устройства
+        primedTaken = true; return track(c, 'движок');
+      };
       Wrapped.prototype = AC.prototype;
       window.AudioContext = Wrapped; if (window.webkitAudioContext) window.webkitAudioContext = Wrapped;
     }
+    // Индикатор: доходит ли реальный сигнал до выхода (динамик/наушники). Анализатор → gain 0 → destination, звук не меняет.
+    var outPeak = 0, outMax = 0, conn = window.AudioNode && AudioNode.prototype.connect;
+    function meter(c) {
+      if (c.__rzm) return c.__rzm;
+      try { var a = c.createAnalyser(), g = c.createGain(); a.fftSize = 1024; g.gain.value = 0; a.__rz = g.__rz = 1;
+        conn.call(a, g); conn.call(g, c.destination); c.__rzm = a; var buf = new Float32Array(1024);
+        setInterval(function () { if (!diag || diag.style.display === 'none') return; a.getFloatTimeDomainData(buf); var m = 0;
+          for (var i = 0; i < buf.length; i++) { var x = buf[i] < 0 ? -buf[i] : buf[i]; if (x > m) m = x; } outPeak = m; if (m > outMax) outMax = m; }, 100);
+      } catch (e) { c.__rzm = null; }
+      return c.__rzm;
+    }
+    if (conn) AudioNode.prototype.connect = function (t) {
+      var r = conn.apply(this, arguments);
+      try { if (!this.__rz && window.AudioDestinationNode && t instanceof AudioDestinationNode) { var m = meter(this.context); if (m) conn.call(this, m); } } catch (e) {}
+      return r;
+    };
     var hasSession = !!(navigator.audioSession && 'type' in navigator.audioSession);
-    function setSession() { try { if (hasSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback'; } catch (e) {} }
+    function setSession() { try { if (hasSession && navigator.audioSession.type !== 'playback') { navigator.audioSession.type = 'playback'; L('audioSession = playback'); } } catch (e) { L('audioSession err ' + e); } }
     setSession();
-    var silent = null;
-    function silentWavUrl() {   // 0.5 с тишины, 8 кГц, 8 бит, моно — собираем WAV прямо в памяти
-      var n = 4000, b = new ArrayBuffer(44 + n), v = new DataView(b), w = function (o, t) { for (var i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
-      w(0, 'RIFF'); v.setUint32(4, 36 + n, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-      v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true); w(36, 'data'); v.setUint32(40, n, true);
-      for (var i = 0; i < n; i++) v.setUint8(44 + i, 128);
+    function wavUrl(freq, sec, amp) {   // WAV в памяти: тишина (freq=0) или тон
+      var sr = 22050, n = Math.round(sr * sec), b = new ArrayBuffer(44 + n * 2), v = new DataView(b),
+          w = function (o, t) { for (var i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+      w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+      for (var i = 0; i < n; i++) { var env = Math.min(1, i / 400, (n - i) / 2000);
+        v.setInt16(44 + i * 2, freq ? Math.round(Math.sin(2 * Math.PI * freq * i / sr) * amp * env * 32767) : 0, true); }
       return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
     }
-    function playSilent() {     // только если нет audioSession (iOS < 17)
+    var silent = null, beepUrl = null;
+    function playSilent() {   // запасной путь для iOS < 17: тихий <audio> переводит звук страницы в «медиа»
       if (hasSession || document.hidden) return;
-      try {
-        if (!silent) { silent = document.createElement('audio'); silent.setAttribute('x-webkit-airplay', 'deny'); silent.preload = 'auto';
-          silent.loop = true; silent.src = silentWavUrl(); silent.setAttribute('playsinline', ''); }
-        if (silent.paused) { var p = silent.play(); if (p && p.catch) p.catch(function () {}); }
-      } catch (e) {}
+      try { if (!silent) { silent = new Audio(wavUrl(0, 0.5, 0)); silent.loop = true; silent.setAttribute('playsinline', ''); silent.setAttribute('x-webkit-airplay', 'deny'); }
+            if (silent.paused) { var p = silent.play(); if (p && p.catch) p.catch(function (e) { L('silent audio: ' + e.name); }); } } catch (e) {}
     }
-    function kick(c) {          // пустой буфер внутри жеста «будит» вывод в WebKit
-      try { var b = c.createBuffer(1, 1, 22050), s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start(0); } catch (e) {}
+    function htmlBeep() {
+      try { if (!beepUrl) beepUrl = wavUrl(880, 0.35, 0.35); var a = new Audio(beepUrl); a.setAttribute('playsinline', '');
+            var p = a.play(); L('HTML audio: play()'); if (p && p.then) p.then(function () { L('HTML audio: играет'); }, function (e) { L('HTML audio ОШИБКА: ' + e.name); }); } catch (e) { L('HTML audio ОШИБКА ' + e); }
     }
+    function chime(c, loud) {   // короткий сигнал прямо в destination контекста (в обход Godot)
+      try { var t = c.currentTime + 0.02, g = c.createGain(), o = c.createOscillator(); o.type = 'triangle';
+            o.frequency.setValueAtTime(660, t); o.frequency.setValueAtTime(990, t + 0.12);
+            g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(loud ? 0.35 : 0.18, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
+            o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + 0.35); L('WebAudio сигнал (' + c.state + ')'); } catch (e) { L('WebAudio ОШИБКА ' + e); }
+    }
+    function kick(c) { try { var b = c.createBuffer(1, 1, 22050), s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start(0); } catch (e) {} }
     function resumeAll(gesture) {
       if (document.hidden) return;
       setSession();
       if (gesture) playSilent();
       ctxs.forEach(function (c) {
         if (c.state === 'closed') return;
-        if (c.state !== 'running') { try { var p = c.resume(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
+        if (c.state !== 'running') { try { var p = c.resume(); if (p && p.catch) p.catch(function (e) { L('resume ОШИБКА ' + e.name); }); } catch (e) {} }
         if (gesture) kick(c);
       });
     }
-    function hook(c) {          // iOS: "interrupted"/"suspended" после звонка или блокировки — пробуем вернуть сразу
-      try { c.addEventListener('statechange', function () { if (c.state !== 'running' && c.state !== 'closed' && !document.hidden) setTimeout(function () { resumeAll(false); }, 250); }); } catch (e) {}
+    function mainCtx() {
+      for (var i = 0; i < ctxs.length; i++) if (ctxs[i].state !== 'closed') return ctxs[i];
+      if (!AC) return null;
+      try { primed = track(new AC(), 'касание'); } catch (e) { L('AudioContext ОШИБКА ' + e); return null; }
+      return primed;
+    }
+    // Главная разблокировка — синхронно внутри касания экрана «Коснитесь, чтобы начать».
+    function unlockTap() {
+      setSession();
+      var c = mainCtx();
+      resumeAll(true);
+      if (c) chime(c, false);
+      htmlBeep();
     }
     function onGesture() { resumeAll(true); }
-    ['touchstart', 'touchend', 'pointerup', 'mousedown', 'click', 'keydown'].forEach(function (ev) {
-      document.addEventListener(ev, onGesture, { capture: true, passive: true });
+    ['touchend', 'pointerup', 'mousedown', 'click', 'keydown'].forEach(function (ev) {
       window.addEventListener(ev, onGesture, { capture: true, passive: true });
     });
-    function onHidden() {       // в фоне — тишина (и не держим аудиосессию)
+    function onHidden() {
       ctxs.forEach(function (c) { try { if (c.state === 'running') c.suspend(); } catch (e) {} });
       if (silent && !silent.paused) try { silent.pause(); } catch (e) {}
     }
@@ -176,11 +240,85 @@ body {
     window.addEventListener('pagehide', onHidden);
     window.addEventListener('pageshow', function () { resumeAll(false); });
     window.addEventListener('focus', function () { resumeAll(false); });
-    window.rubezhAudioState = function () {
-      return { contexts: ctxs.map(function (c) { return c.state + '@' + c.sampleRate; }),
-               session: hasSession ? navigator.audioSession.type : 'n/a', silentLoop: !!(silent && !silent.paused) };
-    };
     document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+
+    // Обновление: новый service worker сразу берёт управление — перезагружаем страницу один раз.
+    if ('serviceWorker' in navigator) {
+      var hadCtl = !!navigator.serviceWorker.controller, reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        L('service worker обновлён'); if (hadCtl && !reloaded && tapVisible()) { reloaded = true; location.reload(); } });
+      window.addEventListener('load', function () { navigator.serviceWorker.getRegistration().then(function (r) { if (r) r.update().catch(function () {}); }); });
+    }
+
+    // ---------- экран «Коснитесь, чтобы начать» и диагностика ----------
+    var tap = null, diag = null, timer = 0, debugWanted = /[?&]audiodebug=1/.test(location.search);
+    function tapVisible() { return tap && tap.style.display !== 'none'; }
+    function buildTap() {
+      tap = document.createElement('div'); tap.id = 'rz-tap';
+      tap.innerHTML = '<h1>РУБЕЖ ЭПОХ</h1><div class="go">Коснитесь, чтобы начать</div><div class="ver">v' + VERSION + '</div><div class="dbg">Проверка звука</div>';
+      var done = function (e) {
+        var isDbg = e.target && e.target.classList && e.target.classList.contains('dbg');
+        unlockTap(); tap.style.display = 'none';
+        if (isDbg || debugWanted) openDiag();
+        if (e.cancelable) e.preventDefault();
+      };
+      tap.addEventListener('touchend', done, false);
+      tap.addEventListener('click', done, false);
+      document.body.appendChild(tap);
+    }
+    function btn(txt, cls, fn) { var b = document.createElement('button'); b.textContent = txt; if (cls) b.className = cls;
+      b.addEventListener('click', function (e) { e.stopPropagation(); fn(); refresh(); }); return b; }
+    function openDiag() {
+      if (!diag) {
+        diag = document.createElement('div'); diag.id = 'rz-diag';
+        var row = document.createElement('div');
+        row.appendChild(btn('Тест WebAudio', 'w', function () { resumeAll(true); var c = mainCtx(); if (c) chime(c, true); }));
+        row.appendChild(btn('Тест HTML audio', 'w', function () { resumeAll(true); htmlBeep(); }));
+        row.appendChild(btn('Тест Godot звук', 'w', function () { resumeAll(true); window.rubezhGodotTest = (window.rubezhGodotTest || 0) + 1; L('Godot тест #' + window.rubezhGodotTest); }));
+        row.appendChild(btn('Обновить игру', 'r', function () { hardUpdate(); }));
+        row.appendChild(btn('Закрыть', '', function () { diag.style.display = 'none'; clearInterval(timer); }));
+        diag.appendChild(row);
+        var pre = document.createElement('pre'); pre.id = 'rz-diag-pre'; diag.appendChild(pre);
+        diag.addEventListener('touchend', function (e) { e.stopPropagation(); }, false);
+        document.body.appendChild(diag);
+      }
+      diag.style.display = 'block'; refresh(); clearInterval(timer); timer = setInterval(refresh, 500);
+    }
+    var cacheNames = '…';
+    function refresh() {
+      if (!diag) return;
+      if (window.caches) caches.keys().then(function (k) { cacheNames = k.map(function (n) { return n.split('-sw-cache-')[1] || n; }).join(', ') || 'нет'; });
+      var g = window.rubezhGodotAudio, lines = [];
+      lines.push('Версия страницы: v' + VERSION + '   Godot: ' + (g ? 'v' + g.version : '— (игра ещё грузится)'));
+      lines.push('Service worker: ' + (navigator.serviceWorker && navigator.serviceWorker.controller ? 'активен' : 'нет') + '   кэш: ' + cacheNames);
+      lines.push('AudioContext: ' + ctxs.length + ' шт. ' + ctxs.map(function (c, i) { return '#' + (i + 1) + ' ' + c.state + ' ' + c.sampleRate + 'Гц t=' + c.currentTime.toFixed(1) +
+        (c.baseLatency ? ' lat=' + (c.baseLatency * 1000).toFixed(0) + 'мс' : ''); }).join(' | '));
+      lines.push('Сигнал на выходе: сейчас ' + outPeak.toFixed(3) + ', максимум ' + outMax.toFixed(3) + (outMax > 0.005 ? '  ✔ звук идёт' : '  ✘ тишина'));
+      lines.push('audioSession: ' + (hasSession ? navigator.audioSession.type + ' / ' + (navigator.audioSession.state || '?') : 'нет (iOS < 17?)') + '   тихий <audio>: ' + (silent ? (silent.paused ? 'пауза' : 'играет') : 'нет'));
+      if (g) {
+        lines.push('Godot: mix_rate=' + g.mix_rate + ' режим=' + (g.playback_type === 1 ? 'sample' : g.playback_type === 0 ? 'stream' : g.playback_type) +
+          '  музыка «' + g.music + '» ' + (g.music_playing ? 'играет' : 'НЕ играет') + '  звуков сейчас: ' + g.sfx_playing);
+        lines.push('Громкость (настройки): музыка ' + Math.round(g.music_vol * 100) + '%  звуки ' + Math.round(g.sfx_vol * 100) + '%  голос ' + Math.round(g.voice_vol * 100) + '%');
+        lines.push('Шины: ' + g.buses.map(function (b) { return b.name + ' ' + b.db + 'дБ' + (b.mute ? ' MUTE' : ''); }).join(', '));
+      }
+      lines.push('Устройство: ' + navigator.userAgent.replace(/^Mozilla\/5.0 /, '').slice(0, 110) + (navigator.standalone ? '  [с экрана Домой]' : ''));
+      lines.push('');
+      lines.push('Журнал:'); lines = lines.concat(log.slice(-14).reverse());
+      document.getElementById('rz-diag-pre').textContent = lines.join('\n');
+    }
+    function hardUpdate() {
+      L('обновление: сброс кэша…');
+      var jobs = [];
+      if (navigator.serviceWorker) jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); }));
+      if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); }));
+      Promise.all(jobs).catch(function () {}).then(function () { location.replace(location.pathname + '?v=' + Date.now() + (debugWanted ? '&audiodebug=1' : '')); });
+    }
+    window.rubezhAudioState = function () {
+      return { version: VERSION, contexts: ctxs.map(function (c) { return c.state + '@' + c.sampleRate; }),
+               session: hasSession ? navigator.audioSession.type : 'n/a', silentLoop: !!(silent && !silent.paused), log: log.slice() };
+    };
+    window.rubezhOpenAudioDebug = openDiag;
+    if (document.body) buildTap(); else document.addEventListener('DOMContentLoaded', buildTap);
   })();
 </script>
 <!-- v1.3.1: safe area (вырез/«чёлка», индикатор Home) для адаптивного HUD. Godot читает через JavaScriptBridge. -->
@@ -217,7 +355,7 @@ body {
 
 		<script src="index.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":25224268,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":25227940,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
 const GODOT_THREADS_ENABLED = false;
 const engine = new Engine(GODOT_CONFIG);
 

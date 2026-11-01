@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1793504021|2910253';
+const CACHE_VERSION = '1793505015|2563165';
 /** @type {string} */
 const CACHE_PREFIX = 'Рубеж Эпох-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
@@ -21,7 +21,8 @@ const CACHEABLE_FILES = ["index.wasm","index.pck"];
 const FULL_CACHE = CACHED_FILES.concat(CACHEABLE_FILES);
 
 self.addEventListener('install', (event) => {
-	event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CACHED_FILES)));
+	self.skipWaiting(); // rubezh: новая версия активируется сразу
+	event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CACHED_FILES.map((f) => new Request(f, { cache: 'reload' })))));
 });
 
 self.addEventListener('activate', (event) => {
@@ -33,7 +34,7 @@ self.addEventListener('activate', (event) => {
 	).then(function () {
 		// Enable navigation preload if available.
 		return ('navigationPreload' in self.registration) ? self.registration.navigationPreload.enable() : Promise.resolve();
-	}));
+	}).then(() => self.clients.claim()));
 });
 
 /**
@@ -104,6 +105,19 @@ self.addEventListener(
 			event.respondWith((async () => {
 				// Try to use cache first
 				const cache = await caches.open(CACHE_NAME);
+				if (isNavigate || local === 'index.html') {
+					// rubezh: страница — сначала из сети (свежая версия), кэш — только без интернета
+					try {
+						const net = await Promise.race([
+							self.fetch(event.request.url, { cache: 'no-cache', credentials: 'same-origin' }),
+							new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
+						]);
+						if (net && net.ok) {
+							cache.put(event.request, net.clone());
+							return net;
+						}
+					} catch (e) { /* офлайн — ниже из кэша */ }
+				}
 				if (isNavigate) {
 					// Check if we have full cache during HTML page request.
 					/** @type {Response[]} */
