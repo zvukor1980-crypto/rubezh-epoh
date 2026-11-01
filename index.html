@@ -115,26 +115,71 @@ body {
   @media (orientation: portrait) and (max-width: 900px) { #rotate-overlay { display:flex; } }
 </style>
 <script>
-  // iOS: разблокировать звук на первом касании (WebAudio стартует только после жеста)
+  // v1.3.3 — звук на iPhone (Safari и приложение «На экран Домой»).
+  // 1) iOS глушит Web Audio переключателем «Бесшумно»: просим категорию «воспроизведение» (navigator.audioSession, iOS 17+),
+  //    а на старых iOS — запускаем тихий зацикленный <audio> на первом касании (звук идёт как медиа, а не как «звонок»).
+  // 2) AudioContext Godot создаётся до касания и остаётся suspended — возобновляем его на каждом жесте (touchend/pointerup/click),
+  //    после возврата из фона (visibilitychange/pageshow/focus) и из iOS-состояния "interrupted" (звонок, Siri, блокировка).
   (function () {
     var ctxs = [];
     var AC = window.AudioContext || window.webkitAudioContext;
     if (AC) {
-      var Wrapped = function () { var c = new (Function.prototype.bind.apply(AC, [null].concat([].slice.call(arguments))))(); ctxs.push(c); return c; };
+      var Wrapped = function (opts) { var c = (opts === undefined) ? new AC() : new AC(opts); ctxs.push(c); hook(c); return c; };
       Wrapped.prototype = AC.prototype;
       window.AudioContext = Wrapped; if (window.webkitAudioContext) window.webkitAudioContext = Wrapped;
     }
-    function unlock() {
+    var hasSession = !!(navigator.audioSession && 'type' in navigator.audioSession);
+    function setSession() { try { if (hasSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback'; } catch (e) {} }
+    setSession();
+    var silent = null;
+    function silentWavUrl() {   // 0.5 с тишины, 8 кГц, 8 бит, моно — собираем WAV прямо в памяти
+      var n = 4000, b = new ArrayBuffer(44 + n), v = new DataView(b), w = function (o, t) { for (var i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+      w(0, 'RIFF'); v.setUint32(4, 36 + n, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true); w(36, 'data'); v.setUint32(40, n, true);
+      for (var i = 0; i < n; i++) v.setUint8(44 + i, 128);
+      return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
+    }
+    function playSilent() {     // только если нет audioSession (iOS < 17)
+      if (hasSession || document.hidden) return;
+      try {
+        if (!silent) { silent = document.createElement('audio'); silent.setAttribute('x-webkit-airplay', 'deny'); silent.preload = 'auto';
+          silent.loop = true; silent.src = silentWavUrl(); silent.setAttribute('playsinline', ''); }
+        if (silent.paused) { var p = silent.play(); if (p && p.catch) p.catch(function () {}); }
+      } catch (e) {}
+    }
+    function kick(c) {          // пустой буфер внутри жеста «будит» вывод в WebKit
+      try { var b = c.createBuffer(1, 1, 22050), s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start(0); } catch (e) {}
+    }
+    function resumeAll(gesture) {
+      if (document.hidden) return;
+      setSession();
+      if (gesture) playSilent();
       ctxs.forEach(function (c) {
-        try {
-          if (c.state !== 'running') c.resume();
-          var b = c.createBuffer(1, 1, 22050), s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start(0);
-        } catch (e) {}
+        if (c.state === 'closed') return;
+        if (c.state !== 'running') { try { var p = c.resume(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
+        if (gesture) kick(c);
       });
     }
-    ['touchend', 'pointerup', 'mousedown', 'keydown'].forEach(function (ev) { document.addEventListener(ev, unlock, true); });
-    // после возврата в приложение (iOS ставит звук на паузу)
-    document.addEventListener('visibilitychange', function () { if (!document.hidden) unlock(); });
+    function hook(c) {          // iOS: "interrupted"/"suspended" после звонка или блокировки — пробуем вернуть сразу
+      try { c.addEventListener('statechange', function () { if (c.state !== 'running' && c.state !== 'closed' && !document.hidden) setTimeout(function () { resumeAll(false); }, 250); }); } catch (e) {}
+    }
+    function onGesture() { resumeAll(true); }
+    ['touchstart', 'touchend', 'pointerup', 'mousedown', 'click', 'keydown'].forEach(function (ev) {
+      document.addEventListener(ev, onGesture, { capture: true, passive: true });
+      window.addEventListener(ev, onGesture, { capture: true, passive: true });
+    });
+    function onHidden() {       // в фоне — тишина (и не держим аудиосессию)
+      ctxs.forEach(function (c) { try { if (c.state === 'running') c.suspend(); } catch (e) {} });
+      if (silent && !silent.paused) try { silent.pause(); } catch (e) {}
+    }
+    document.addEventListener('visibilitychange', function () { if (document.hidden) onHidden(); else resumeAll(false); });
+    window.addEventListener('pagehide', onHidden);
+    window.addEventListener('pageshow', function () { resumeAll(false); });
+    window.addEventListener('focus', function () { resumeAll(false); });
+    window.rubezhAudioState = function () {
+      return { contexts: ctxs.map(function (c) { return c.state + '@' + c.sampleRate; }),
+               session: hasSession ? navigator.audioSession.type : 'n/a', silentLoop: !!(silent && !silent.paused) };
+    };
     document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
   })();
 </script>
