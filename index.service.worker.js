@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1793519591|2481505';
+const CACHE_VERSION = '1793519591|2481505-audit1';
 /** @type {string} */
 const CACHE_PREFIX = 'Рубеж Эпох-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
@@ -100,7 +100,7 @@ self.addEventListener(
 		const referrer = event.request.referrer || '';
 		const base = referrer.slice(0, referrer.lastIndexOf('/') + 1);
 		const local = url.startsWith(base) ? url.replace(base, '') : '';
-		const isCacheable = FULL_CACHE.some((v) => v === local) || (base === referrer && base.endsWith(CACHED_FILES[0]));
+		const isCacheable = FULL_CACHE.includes(local) || FULL_CACHE.some((v) => new URL(v, self.registration.scope).href === url);
 		if (isNavigate || isCacheable) {
 			event.respondWith((async () => {
 				// Try to use cache first
@@ -121,7 +121,7 @@ self.addEventListener(
 				if (isNavigate) {
 					// Check if we have full cache during HTML page request.
 					/** @type {Response[]} */
-					const fullCache = await Promise.all(FULL_CACHE.map((name) => cache.match(name)));
+					const fullCache = await Promise.all(FULL_CACHE.map((name) => cache.match(new URL(name, self.registration.scope).href)));
 					const missing = fullCache.some((v) => v === undefined);
 					if (missing) {
 						try {
@@ -131,7 +131,7 @@ self.addEventListener(
 						} catch (e) {
 							// And return the hopefully always cached offline page in case of network failure.
 							console.error('Network error: ', e); // eslint-disable-line no-console
-							return caches.match(OFFLINE_URL);
+							return (await cache.match(new URL(OFFLINE_URL, self.registration.scope).href)) || Response.error();
 						}
 					}
 				}
