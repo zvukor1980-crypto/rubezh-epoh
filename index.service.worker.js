@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1793519591|2481505-audit1';
+const CACHE_VERSION = '1793519591|2481505-audit2';
 /** @type {string} */
 const CACHE_PREFIX = 'Рубеж Эпох-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
@@ -100,7 +100,7 @@ self.addEventListener(
 		const referrer = event.request.referrer || '';
 		const base = referrer.slice(0, referrer.lastIndexOf('/') + 1);
 		const local = url.startsWith(base) ? url.replace(base, '') : '';
-		const isCacheable = FULL_CACHE.includes(local) || FULL_CACHE.some((v) => new URL(v, self.registration.scope).href === url);
+		const isCacheable = FULL_CACHE.some((v) => new URL(v, self.registration.scope).pathname === new URL(url).pathname);
 		if (isNavigate || isCacheable) {
 			event.respondWith((async () => {
 				// Try to use cache first
