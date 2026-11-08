@@ -189,7 +189,7 @@ body {
   //  • возобновление на каждом жесте, после фона/звонка (iOS-состояние "interrupted"), пауза звука в фоне;
   //  • диагностика: ?audiodebug=1 или кнопка «Проверка звука».
   (function () {
-    var VERSION = '1.6.1';
+    var VERSION = '1.6.2';
     window.RUBEZH_VERSION = VERSION;
     var AC = window.AudioContext || window.webkitAudioContext;
     var ctxs = [], primed = null, primedTaken = false, log = [];
@@ -313,7 +313,7 @@ body {
         var isDbg = e.target && e.target.classList && e.target.classList.contains('dbg');
         if (!isDbg && !(e.target.closest && e.target.closest('.go'))) return;
         if(e.changedTouches && tapStart){var pt=e.changedTouches[0];if(pt && Math.hypot(pt.clientX-tapStart[0],pt.clientY-tapStart[1])>10)return;}
-        unlockTap(); tap.style.display = 'none';
+        unlockTap(); tap.style.display = 'none'; window.dispatchEvent(new Event('rubezh-started'));
         if (isDbg || debugWanted) openDiag();
         if (e.cancelable) e.preventDefault();
       };
@@ -383,8 +383,6 @@ body {
     if (p) { var cs = getComputedStyle(p); l = parseFloat(cs.paddingLeft) || 0; t = parseFloat(cs.paddingTop) || 0;
              r = parseFloat(cs.paddingRight) || 0; b = parseFloat(cs.paddingBottom) || 0; }
     var w = window.innerWidth, h = window.innerHeight;
-    var tools = document.getElementById('portal-tools');
-    if (tools) b = Math.max(b, Math.ceil(window.innerHeight - tools.getBoundingClientRect().top));
     return [l, t, r, b, w, h].join(',');
   };
 </script>
