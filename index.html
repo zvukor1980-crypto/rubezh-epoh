@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 	<head>
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, height=device-height, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
@@ -189,7 +189,7 @@ body {
   //  • возобновление на каждом жесте, после фона/звонка (iOS-состояние "interrupted"), пауза звука в фоне;
   //  • диагностика: ?audiodebug=1 или кнопка «Проверка звука».
   (function () {
-    var VERSION = '1.5.0';
+    var VERSION = '1.6.0';
     window.RUBEZH_VERSION = VERSION;
     var AC = window.AudioContext || window.webkitAudioContext;
     var ctxs = [], primed = null, primedTaken = false, log = [];
@@ -307,6 +307,7 @@ body {
       if (window.rzLang === 'he') tap.dir = 'rtl';
       tap.innerHTML = '<h1>' + T[0] + '</h1><div class="go">' + T[1] + '</div><div class="ver">v' + VERSION + '</div><div class="dbg">' + T[2] + '</div>';
       var done = function (e) {
+        if (e.target.closest && e.target.closest('[data-portal-action]')) return;
         var isDbg = e.target && e.target.classList && e.target.classList.contains('dbg');
         unlockTap(); tap.style.display = 'none';
         if (isDbg || debugWanted) openDiag();
@@ -357,11 +358,7 @@ body {
       document.getElementById('rz-diag-pre').textContent = lines.join('\n');
     }
     function hardUpdate() {
-      L('обновление: сброс кэша…');
-      var jobs = [];
-      if (navigator.serviceWorker) jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); }));
-      if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); }));
-      Promise.all(jobs).catch(function () {}).then(function () { location.replace(location.pathname + '?v=' + Date.now() + (debugWanted ? '&audiodebug=1' : '')); });
+      if(window.rzUpdate)window.rzUpdate();
     }
     window.rubezhAudioState = function () {
       return { version: VERSION, contexts: ctxs.map(function (c) { return c.state + '@' + c.sampleRate; }),
@@ -382,10 +379,13 @@ body {
     if (p) { var cs = getComputedStyle(p); l = parseFloat(cs.paddingLeft) || 0; t = parseFloat(cs.paddingTop) || 0;
              r = parseFloat(cs.paddingRight) || 0; b = parseFloat(cs.paddingBottom) || 0; }
     var w = window.innerWidth, h = window.innerHeight;
+    b += 48;
     return [l, t, r, b, w, h].join(',');
   };
 </script>
 
+<link rel="stylesheet" href="royal.css">
+<script src="portal.js" defer></script>
 </head>
 	<body>
 		<canvas id="canvas">

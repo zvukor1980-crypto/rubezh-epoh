@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1793519591|2481505';
+const CACHE_VERSION = '1.6.0';
 /** @type {string} */
 const CACHE_PREFIX = 'Рубеж Эпох-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
@@ -14,15 +14,15 @@ const OFFLINE_URL = 'index.offline.html';
 const ENSURE_CROSSORIGIN_ISOLATION_HEADERS = false;
 // Files that will be cached on load.
 /** @type {string[]} */
-const CACHED_FILES = ["index.html","index.js","index.offline.html","index.icon.png","index.apple-touch-icon.png","index.audio.worklet.js","index.audio.position.worklet.js"];
+const CACHED_FILES = ["royal.css","portal.js","art/age-1.webp","art/age-4.webp","art/age-6.webp","index.html","index.js","index.offline.html","index.icon.png","index.apple-touch-icon.png","index.audio.worklet.js","index.audio.position.worklet.js"];
 // Files that we might not want the user to preload, and will only be cached on first load.
 /** @type {string[]} */
 const CACHEABLE_FILES = ["index.wasm","index.pck"];
 const FULL_CACHE = CACHED_FILES.concat(CACHEABLE_FILES);
 
 self.addEventListener('install', (event) => {
-	self.skipWaiting(); // rubezh: новая версия активируется сразу
-	event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CACHED_FILES.map((f) => new Request(f, { cache: 'reload' })))));
+	// Activate only after the new shell has been cached.
+	event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CACHED_FILES.map((f) => new Request(f, { cache: 'reload' }))).then(async()=>{const old=await caches.open(CACHE_PREFIX+'1793519591|2481505');for(const name of CACHEABLE_FILES){const r=await old.match(name);if(r)await cache.put(name,r);}await self.skipWaiting();})));
 });
 
 self.addEventListener('activate', (event) => {
@@ -80,7 +80,7 @@ async function fetchAndCache(event, cache, isCacheable) {
 		response = ensureCrossOriginIsolationHeaders(response);
 	}
 
-	if (isCacheable) {
+	if (isCacheable && response.ok) {
 		// And update the cache
 		cache.put(event.request, response.clone());
 	}
@@ -97,10 +97,11 @@ self.addEventListener(
 	(event) => {
 		const isNavigate = event.request.mode === 'navigate';
 		const url = event.request.url || '';
-		const referrer = event.request.referrer || '';
-		const base = referrer.slice(0, referrer.lastIndexOf('/') + 1);
-		const local = url.startsWith(base) ? url.replace(base, '') : '';
-		const isCacheable = FULL_CACHE.some((v) => v === local) || (base === referrer && base.endsWith(CACHED_FILES[0]));
+		const base = self.registration.scope;
+        const clean = new URL(url);clean.search='';clean.hash='';
+        const local = clean.href.startsWith(base) ? clean.href.slice(base.length) : '';
+        if(event.request.method!=='GET'||!clean.href.startsWith(base))return;
+        const isCacheable = FULL_CACHE.includes(local) || clean.href===base;
 		if (isNavigate || isCacheable) {
 			event.respondWith((async () => {
 				// Try to use cache first
@@ -135,7 +136,7 @@ self.addEventListener(
 						}
 					}
 				}
-				let cached = await cache.match(event.request);
+				let cached = await cache.match(isNavigate?'index.html':event.request,{ignoreSearch:true});
 				if (cached != null) {
 					if (ENSURE_CROSSORIGIN_ISOLATION_HEADERS) {
 						cached = ensureCrossOriginIsolationHeaders(cached);
