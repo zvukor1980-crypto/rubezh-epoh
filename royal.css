@@ -12,3 +12,17 @@
 @media(orientation:landscape) and (max-height:550px){#rz-tap{padding:18px 90px 80px;gap:10px}#rz-tap h1{font-size:38px}.portal-ages{display:none}.portal-copy{font-size:13px;max-width:540px}#rz-tap .go{padding:12px 25px;min-height:44px}.portal-kicker{font-size:10px}}
 @media(max-width:400px){.portal-age{height:92px}.portal-copy{font-size:13px}#rz-tap{gap:16px;padding-left:20px;padding-right:20px}}
 @media(prefers-reduced-motion:reduce){#rz-tap *{animation:none!important}}
+
+/* 1.6.1: measured chrome, safe-area layout and scrollable short screens. */
+:root{--portal-height:calc(57px + env(safe-area-inset-bottom,0px))}
+#rz-tap,#rz-tap *,#portal-tools,#portal-tools *,#portal-message,#portal-message *{box-sizing:border-box}
+#rz-tap{bottom:var(--portal-height);padding:calc(env(safe-area-inset-top) + 28px) max(20px,env(safe-area-inset-right)) 28px max(20px,env(safe-area-inset-left));overflow-y:auto;overflow-x:hidden;touch-action:pan-y;justify-content:safe center;gap:16px}
+#rz-tap>*{flex-shrink:0;max-width:100%}#rz-tap h1{overflow-wrap:anywhere}
+#rz-tap .go{min-height:54px;line-height:1.25;padding:15px 22px;max-width:100%}
+#rz-tap .dbg,#rz-tap .ver{display:none}
+#portal-tools{gap:8px;min-height:57px}#portal-tools button{min-height:44px;white-space:nowrap;min-width:0;padding:8px 12px}#portal-version{white-space:nowrap}
+#portal-message{bottom:calc(var(--portal-height) + 10px);max-height:calc(100dvh - var(--portal-height) - env(safe-area-inset-top) - 24px);overflow-y:auto;overscroll-behavior:contain}
+#rz-diag{top:calc(env(safe-area-inset-top) + 8px);bottom:calc(var(--portal-height) + 8px);box-sizing:border-box}
+@media(orientation:landscape) and (max-height:550px){#rz-tap{padding:calc(env(safe-area-inset-top) + 12px) max(22px,env(safe-area-inset-right)) 12px max(22px,env(safe-area-inset-left));gap:10px}#rz-tap h1{font-size:clamp(24px,5vw,38px)}#rz-tap .go{min-height:44px;padding:10px 22px}.portal-copy{line-height:1.4}}
+@media(max-height:350px){.portal-copy{display:none}#rz-tap{gap:8px}.portal-kicker{font-size:9px}}
+@media(max-width:340px){#portal-tools{gap:5px}#portal-tools button{padding:8px}.portal-kicker{letter-spacing:.15em}#rz-tap h1{font-size:30px}}

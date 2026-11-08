@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1.6.0';
+const CACHE_VERSION = '1.6.1';
 /** @type {string} */
 const CACHE_PREFIX = 'Рубеж Эпох-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
@@ -22,7 +22,7 @@ const FULL_CACHE = CACHED_FILES.concat(CACHEABLE_FILES);
 
 self.addEventListener('install', (event) => {
 	// Activate only after the new shell has been cached.
-	event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CACHED_FILES.map((f) => new Request(f, { cache: 'reload' }))).then(async()=>{const old=await caches.open(CACHE_PREFIX+'1793519591|2481505');for(const name of CACHEABLE_FILES){const r=await old.match(name);if(r)await cache.put(name,r);}await self.skipWaiting();})));
+	event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CACHED_FILES.map((f) => new Request(f, { cache: 'reload' }))).then(async()=>{for(const version of ['1.6.0','1793519591|2481505']){if(!(await caches.keys()).includes(CACHE_PREFIX+version))continue;const old=await caches.open(CACHE_PREFIX+version);for(const name of CACHEABLE_FILES){if(await cache.match(name))continue;const r=await old.match(name);if(r)await cache.put(name,r);}}await self.skipWaiting();})));
 });
 
 self.addEventListener('activate', (event) => {
