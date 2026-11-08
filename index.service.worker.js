@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1.6.2';
+const CACHE_VERSION = '1.6.3';
 /** @type {string} */
 const CACHE_PREFIX = 'Рубеж Эпох-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
@@ -14,7 +14,7 @@ const OFFLINE_URL = 'index.offline.html';
 const ENSURE_CROSSORIGIN_ISOLATION_HEADERS = false;
 // Files that will be cached on load.
 /** @type {string[]} */
-const CACHED_FILES = ["royal.css","portal.js","art/age-1.webp","art/age-4.webp","art/age-6.webp","index.html","index.js","index.offline.html","index.icon.png","index.apple-touch-icon.png","index.audio.worklet.js","index.audio.position.worklet.js"];
+const CACHED_FILES = ["viewport.js","game.html","royal.css","portal.js","art/age-1.webp","art/age-4.webp","art/age-6.webp","index.html","index.js","index.offline.html","index.icon.png","index.apple-touch-icon.png","index.audio.worklet.js","index.audio.position.worklet.js"];
 // Files that we might not want the user to preload, and will only be cached on first load.
 /** @type {string[]} */
 const CACHEABLE_FILES = ["index.wasm","index.pck"];
@@ -22,7 +22,7 @@ const FULL_CACHE = CACHED_FILES.concat(CACHEABLE_FILES);
 
 self.addEventListener('install', (event) => {
 	// Activate only after the new shell has been cached.
-	event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CACHED_FILES.map((f) => new Request(f, { cache: 'reload' }))).then(async()=>{for(const version of ['1.6.1','1.6.0','1793519591|2481505']){if(!(await caches.keys()).includes(CACHE_PREFIX+version))continue;const old=await caches.open(CACHE_PREFIX+version);for(const name of CACHEABLE_FILES){if(await cache.match(name))continue;const r=await old.match(name);if(r)await cache.put(name,r);}}await self.skipWaiting();})));
+	event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CACHED_FILES.map((f) => new Request(f, { cache: 'reload' }))).then(async()=>{for(const version of ['1.6.2','1.6.1','1.6.0','1793519591|2481505']){if(!(await caches.keys()).includes(CACHE_PREFIX+version))continue;const old=await caches.open(CACHE_PREFIX+version);for(const name of CACHEABLE_FILES){if(await cache.match(name))continue;const r=await old.match(name);if(r)await cache.put(name,r);}}await self.skipWaiting();})));
 });
 
 self.addEventListener('activate', (event) => {
@@ -136,7 +136,7 @@ self.addEventListener(
 						}
 					}
 				}
-				let cached = await cache.match(isNavigate?'index.html':event.request,{ignoreSearch:true});
+				let cached = await cache.match(isNavigate?(local==='game.html'?'game.html':'index.html'):event.request,{ignoreSearch:true});
 				if (cached != null) {
 					if (ENSURE_CROSSORIGIN_ISOLATION_HEADERS) {
 						cached = ensureCrossOriginIsolationHeaders(cached);

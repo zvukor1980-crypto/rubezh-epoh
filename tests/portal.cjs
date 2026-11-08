@@ -9,5 +9,5 @@ height=78;listeners.orientationchange();assert.equal(vars['--portal-height'],'78
 height=57;listeners.resize();assert.equal(vars['--portal-height'],'57px');
 assert.equal(body.children.filter(x=>x.id==='portal-tools').length,0);
 const tools=tap.children.find(x=>x.id==='portal-tools');assert(tools);listeners['rubezh-started']();assert.equal(tools.hidden,true);assert.equal(vars['--portal-height'],'0px');listeners.resize();assert.equal(vars['--portal-height'],'0px');
-const html=fs.readFileSync('index.html','utf8');assert(html.includes('<button type="button" class="go">'));assert(html.includes("closest('.go')"));
+const html=fs.readFileSync('game.html','utf8');assert(html.includes('<button type="button" class="go">'));assert(html.includes("closest('.go')"));
 console.log('PASS: toolbar belongs to splash, disappears on start, reserves zero game space after rotation');
